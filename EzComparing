@@ -84,10 +84,12 @@ class FileSelector:
 
         # 为A文件添加选择标题行的Combobox
         self.header_a_selector = ttk.Combobox(self.frame, state="disabled")
+        self.header_a_selector.set("请选择文件标题行序号")  # 设置默认值
         self.header_a_selector.grid(row=0, column=3, padx=5, pady=5)
 
         # 为B文件添加选择标题行的Combobox
         self.header_b_selector = ttk.Combobox(self.frame, state="disabled")
+        self.header_b_selector.set("请选择文件标题行序号")  # 设置默认值
         self.header_b_selector.grid(row=2, column=3, padx=5, pady=5)
 
         # 执行分析按钮
@@ -165,6 +167,9 @@ class FileSelector:
             messagebox.showerror("错误", "请确保文件、工作表名、标题行序号都已经完成选择再点击分析！")
             return
 
+        # 锁定按钮
+        self.analyze_button.config(state=tk.DISABLED)
+
         # 获取工作表名和标题行序号
         sheet_a_name = self.sheet_a_selector.get()
         sheet_b_name = self.sheet_b_selector.get()
@@ -189,6 +194,8 @@ class FileSelector:
         # 检查common_columns是否为空
         if not common_columns:
             tk.Label(self.column_selection_frame, text="没有共有的列可以选择").pack()
+            # 锁定按钮
+            self.analyze_button.config(state=tk.NORMAL)
             return
 
         # 创建一个字典来存储每个列名对应的BooleanVar变量
@@ -210,6 +217,8 @@ class FileSelector:
 
         self.column_selection_frame.pack()  # Show the frame
 
+        messagebox.showinfo("提示", "请在多选框中至少选择一列作为报表的固定输出列，也可多选。\n点击【确认】按钮以继续。")
+
     def compare_data(self):
         # 获取用户选择的列名
         self.selected_columns = [column for column, var in self.column_vars.items() if var.get()]
@@ -218,7 +227,10 @@ class FileSelector:
 
         # 如果没有列被选中，就默认为一个空列表
         if not self.selected_columns:
-            self.selected_columns = []
+            messagebox.showerror("错误", "请至少选择一个列作为报表的固定输出列！")
+            # 解锁按钮
+            # self.analyze_button.config(state=tk.NORMAL)
+            return
 
         # 打印选中的列
         print("selected_columns:", self.selected_columns)
@@ -226,6 +238,12 @@ class FileSelector:
         # 将选中的列赋值给key_columns
         self.key_columns = self.selected_columns.copy()
         print(self.key_columns)
+
+        if self.key_columns is None:
+            messagebox.showerror("错误", "请至少选择一个列作为报表的固定输出列！")
+            # 解锁按钮
+            self.analyze_button.config(state=tk.NORMAL)
+            return
 
         # 获取工作表名和标题行序号
         sheet_a_name = self.sheet_a_selector.get()
@@ -259,8 +277,11 @@ class FileSelector:
         confirm_button = tk.Button(self.column_selection_frame, text="确认", command=self.confirm_compare_data)
         confirm_button.grid(row=num_rows, column=0, columnspan=num_columns)
 
+        messagebox.showinfo("提示", "请在多选框中选择你不想比对数据的列，支持多选，也可不选。\n点击【确认】按钮以继续。。")
+
     def confirm_compare_data(self):
         print("confirm_compare_data is called.")
+
         try:
             self.final_compare_data()  # Call final_compare_data instead of compare_data
         except Exception as e:
@@ -272,6 +293,12 @@ class FileSelector:
 
     def final_compare_data(self):
         print("final_compare_data method is called.")
+
+        if self.key_columns is None:
+            messagebox.showerror("错误", "请至少选择一个列作为报表的固定输出列！")
+            # 解锁按钮
+            self.analyze_button.config(state=tk.NORMAL)
+            return
 
         self.excluded_columns = [column for column, var in self.column_vars.items() if var.get()]
         print("Excluded columns:", self.excluded_columns)
@@ -317,97 +344,77 @@ class FileSelector:
 
         added_records = b_keys - a_keys
         removed_records = a_keys - b_keys
-        print("Added records:", added_records)
-        print("Removed records:", removed_records)
 
         report_data_columns = self.key_columns + ['变动字段名称', 'A文件中的字段值', 'B文件中的字段值', '来自文件']
         report_data = pd.DataFrame(columns=report_data_columns)
-        print("Initial report_data DataFrame:")
-        print(report_data)
 
-        def generate_new_row(record, key_columns, status, file_name):
-            return list(record[:len(key_columns)]) + [status, '', '', file_name]
+        new_rows = []  # 初始化列表收集所有新行
 
-        print("Columns of report_data before adding new rows:", report_data.columns)
+        # 处理新增记录
+        for record in added_records:
+            new_rows.append(list(record) + ['新增记录', '', '', file_b_name])
 
-        new_rows = [generate_new_row(record, self.key_columns, '新增记录', file_b_name) for record in added_records]
-        new_rows_df = pd.DataFrame(new_rows, columns=report_data.columns)
-        print("Columns of new_rows_df:", new_rows_df.columns)
-        report_data = pd.concat([report_data, new_rows_df], ignore_index=True)
-
+        # 处理删除记录
         for record in removed_records:
-            new_row = pd.DataFrame([dict(zip(report_data_columns, list(record) + ['删除记录', '', '', file_a_name]))])
-            report_data = pd.concat([report_data, new_row], ignore_index=True)
+            new_rows.append(list(record) + ['删除记录', '', '', file_a_name])
 
+        # 如果有新增或删除的记录，先将它们添加到 report_data 中
+        if new_rows:
+            new_rows_df = pd.DataFrame(new_rows, columns=report_data_columns)
+            report_data = pd.concat([report_data, new_rows_df], ignore_index=True)
+
+        # 处理修改的记录
         common_keys = a_keys & b_keys
         if common_keys:
             common_records_a = file_a[file_a[self.key_columns].apply(tuple, axis=1).isin(common_keys)]
-            print("Common records in file_a:")
-            print(common_records_a)
             common_records_b = file_b[file_b[self.key_columns].apply(tuple, axis=1).isin(common_keys)]
-            print("Common records in file_b:")
-            print(common_records_b)
-
-            common_records_b = common_records_b.reindex(columns=common_records_a.columns)
 
             merged_data = pd.merge(common_records_a, common_records_b, on=self.key_columns, suffixes=('_A', '_B'))
-            print('Merged data for comparison:')
-            print(merged_data)
 
-            changed_columns = [column for column in common_records_a.columns if
-                               column in common_records_b.columns and column not in self.key_columns]
-            print("Changed columns identified:", changed_columns)
+            changed_columns = [column for column in common_records_a.columns if column not in self.key_columns]
 
-            # 使用 apply 函数代替循环
-            def check_changes(row):
-                for column in changed_columns:
+            for column in changed_columns:
+                for index, row in merged_data.iterrows():
                     a_value = row[f'{column}_A']
                     b_value = row[f'{column}_B']
-                    print(f"Checking column: {column}")
-                    print(f"a_value: {a_value}")
-                    print(f"b_value: {b_value}")
 
                     if pd.isna(a_value) and pd.isna(b_value):
                         continue
 
                     if a_value != b_value:
-                        return pd.Series([*row[self.key_columns], column, a_value, b_value,
-                                          f'A: {file_a_name} | B: {file_b_name}'], index=report_data_columns)
+                        new_row = pd.DataFrame([[*row[self.key_columns], column, a_value, b_value,
+                                                 f'A: {file_a_name} | B: {file_b_name}']], columns=report_data_columns)
+                        report_data = pd.concat([report_data, new_row], ignore_index=True)
 
-            changes = merged_data.apply(check_changes, axis=1).dropna()
-            report_data = pd.concat([report_data, changes], ignore_index=True)
-
-            print("Report data after processing changes:")
-            print(report_data)
-
-            if not report_data.empty:
-                self.save_report(report_data)
-                print("Report saved.")
-            else:
-                print("No changes detected between files.")
-
-        print("final_compare_data method is finished.")
-        self.column_selection_frame.destroy()
-
-
-    def save_report(self, report_data):
-        # 实现保存报告的方法
-        pass
-
-    # 确保在类的顶部导入了所需的模块
-    import pandas as pd
-    import threading
+        if not report_data.empty:
+            self.save_report(report_data)
+        else:
+            print("No changes detected between files.")
 
     def save_report(self, report_data):
         timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         output_folder = os.path.join(os.path.expanduser("~"), "Desktop", "Excel比对结果")
         os.makedirs(output_folder, exist_ok=True)
 
+        report_data = self.clean_data(report_data)
+
+        # 确保存在“客户款号+颜色”列，此处假定其为key_columns之一
+        sort_column = [col for col in self.key_columns if '客户款号+颜色' in col]
+        if sort_column:
+            report_data.sort_values(by=sort_column[0], inplace=True)
+
         report_filename = os.path.join(output_folder, f"变动报告_{timestamp_str}.xlsx")
-        report_data.sort_values(by='客户款号+颜色', inplace=True)
         report_data.to_excel(report_filename, index=False, sheet_name='report')
         print(f"报告已保存至 {report_filename}")
         os.startfile(output_folder)
+        # 锁定按钮
+        self.analyze_button.config(state=tk.NORMAL)
+
+    def clean_data(self, df):
+        df = df.applymap(lambda x: ''.join(
+            c for c in unicodedata.normalize('NFKD', x) if unicodedata.category(c) != 'Cc') if isinstance(x,
+                                                                                                          str) else x)
+        return df
 
     def get_str_width(self, s):
         return sum(2 if unicodedata.east_asian_width(c) in 'FWA' else 1 for c in s)
@@ -424,7 +431,11 @@ class FileSelector:
         sheet_name = selector.get()
         if sheet_name and sheet_name != '请选择需比对的工作表......':
             df = pd.read_excel(filepath, sheet_name=sheet_name, nrows=0)  # 读取文件的标题行
-            header_selector['values'] = list(range(1, len(df.columns) + 1))  # 使用行序号+1更新标题行选择器
+            header_selector['values'] = ["请选择文件工作表的标题行序号"] + list(
+                range(1, len(df.columns) + 1))  # 使用行序号+1更新标题行选择器
+            header_selector.set(header_selector['values'][0])
+
+            header_selector.current(0)
             header_selector.config(state="readonly")  # 解锁标题行选择器
         else:
             header_selector.config(state="disabled")  # 锁定标题行选择器
@@ -436,6 +447,18 @@ class FileSelector:
         else:
             header_selector.bind("<<ComboboxSelected>>", self.preview_file_b)
             self.header_b_selected = header_selector.get()
+
+    def preview_file_a(self, event):
+        self.header_a_selected = self.header_a_selector.get()
+        if self.header_a_selected and self.header_a_selected != "请选择文件工作表的标题行序号":
+            self.preview_file(self.file_a_path, self.sheet_a_selector.get(), self.preview_A_text,
+                              self.header_a_selected)
+
+    def preview_file_b(self, event):
+        self.header_b_selected = self.header_b_selector.get()
+        if self.header_b_selected and self.header_b_selected != "请选择文件工作表的标题行序号":
+            self.preview_file(self.file_b_path, self.sheet_b_selector.get(), self.preview_B_text,
+                              self.header_b_selected)
 
     def preview_file(self, filepath, sheet_name, text_widget, header_selected):
         df = pd.read_excel(filepath, sheet_name=sheet_name, header=None)
@@ -457,18 +480,6 @@ class FileSelector:
         self.clear_preview_text(text_widget)
         text_widget.insert(tk.END, text_content)
 
-    def preview_file_a(self, event):
-        self.header_a_selected = self.header_a_selector.get()
-        if self.header_a_selected:
-            self.preview_file(self.file_a_path, self.sheet_a_selector.get(), self.preview_A_text,
-                              self.header_a_selected)
-
-    def preview_file_b(self, event):
-        self.header_b_selected = self.header_b_selector.get()
-        if self.header_b_selected:
-            self.preview_file(self.file_b_path, self.sheet_b_selector.get(), self.preview_B_text,
-                              self.header_b_selected)
-
     def clear_preview_text(self, text_widget):
         text_widget.delete('1.0', tk.END)  # 清空预览文本框
 
@@ -489,6 +500,7 @@ class TextRedirector:
 def run():
     root = tk.Tk()
     selector = FileSelector(root)
+    root.title("Excel比对工具 Beta 1.0 by Alex")
     root.mainloop()
 
 if __name__ == "__main__":
